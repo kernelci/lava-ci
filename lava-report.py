@@ -86,6 +86,7 @@ def boot_report(args):
         print 'Job ID: %s' % job_id
         # Init
         boot_meta = {}
+        kernel_splats = []
         api_url = None
         arch = None
         board_instance = None
@@ -185,6 +186,10 @@ def boot_report(args):
                             kernel_boot_time = test['measurement']
                         if test['test_case_id'] == 'test_kernel_boot_time':
                             kernel_boot_time = test['measurement']
+                        if 'test_kernel_exception_' in test['test_case_id']:
+                            if test['message']:
+                                message = re.sub(r'([[]\s+\d+\.\d+]\s+)', '', test['message'])
+                                kernel_splats.append(message)
                     bundle_attributes = bundle_data['test_runs'][-1]['attributes']
             if in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
                 print bundle_attributes['kernel.defconfig']
@@ -261,9 +266,12 @@ def boot_report(args):
             html = 'boot-%s.html' % platform_name
             if args.lab:
                 directory = os.path.join(results_directory, kernel_defconfig + '/' + args.lab)
+                kernel_bugs_directory = os.path.join(results_directory, args.lab + '/' + 'kernel-bugs')
             else:
                 directory = os.path.join(results_directory, kernel_defconfig)
+                kernel_bugs_directory = os.path.join(results_directory, 'kernel-bugs')
             ensure_dir(directory)
+            ensure_dir(kernel_bugs_directory)
             write_file(job_file, log, directory)
             if kernel_boot_time is None:
                 kernel_boot_time = '0.0'
@@ -295,7 +303,6 @@ def boot_report(args):
             boot_meta['board'] = platform_name
             if board_offline and result == 'FAIL':
                 boot_meta['boot_result'] = 'OFFLINE'
-                #results[kernel_defconfig]['result'] = 'OFFLINE'
             else:
                 boot_meta['boot_result'] = result
             if result == 'FAIL' or result == 'OFFLINE':
@@ -322,6 +329,10 @@ def boot_report(args):
             boot_meta['loadaddr'] = kernel_addr
             json_file = 'boot-%s.json' % platform_name
             write_json(json_file, directory, boot_meta)
+            # Write the kernel splats out
+            if len(kernel_splats) > 0:
+                name = kernel_defconfig + '-' + platform_name + '.txt'
+                write_file('\n'.join(kernel_splats), name, kernel_bugs_directory)
             print 'Creating html version of boot log for %s' % platform_name
             cmd = 'python log2html.py %s' % os.path.join(directory, log)
             subprocess.check_output(cmd, shell=True)
@@ -343,7 +354,7 @@ def boot_report(args):
                 api_url = urlparse.urljoin(args.api, '/upload/%s/%s/%s/%s/%s' % (kernel_tree, kernel_version, kernel_defconfig, args.lab, log))
                 response = requests.put(api_url, headers=headers, data=data)
                 print response.content
-                print 'Uploading text version of boot log'
+                print 'Uploading html version of boot log'
                 with open(os.path.join(directory, html)) as lh:
                     data = lh.read()
                 api_url = urlparse.urljoin(args.api, '/upload/%s/%s/%s/%s/%s' % (kernel_tree, kernel_version, kernel_defconfig, args.lab, html))
