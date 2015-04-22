@@ -20,12 +20,7 @@ def parse_json(json):
 connection, jobs, duration = parse_json(os.path.join(os.path.curdir, 'bundle.json'))
 for job_id in jobs:
     job_details = connection.get_job_details(job_id)
-    try:
-        binary_job_file = connection.get_job_log(job_id)
-    except xmlrpclib.Fault:
-        print 'Job output not found.'
-        continue
-    job_log = str(binary_job_file)
+    job_log = connection.get_job_log(job_id)
     job = Job(jobs[job_id], job_details, job_log)
     bundle_id = job.bundle_id
     if bundle_id:

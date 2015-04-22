@@ -1,3 +1,16 @@
+#!/usr/bin/env python
+#
+# This file is part of lava-ci.  lava-ci is free software: you can
+# redistribute it and/or modify it under the terms of the GNU General Public
+# License as published by the Free Software Foundation, version 2.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# details.
+#
+# Copyright Tyler Baker 2015
+
 import json
 from utils import is_key
 
@@ -6,9 +19,17 @@ class Bundle(object):
 
     def __init__(self, json_bundle):
         # Load an instance of the bundle
+        """
+        Abstracts a LAVA bundle.
+        :string : json_bundle
+        """
         self._bundle = json.loads(json_bundle['content'])
 
     def get_test_results(self, id=None):
+        """
+        Returns the test results from a LAVA bundle.
+        :int : id
+        """
         test_runs = self.test_runs
         validated_results = []
         if test_runs:
@@ -25,12 +46,18 @@ class Bundle(object):
 
     @property
     def test_runs(self):
+        """
+        Returns the test runs from a LAVA bundle.
+        """
         if is_key('test_runs', self._bundle):
             # Get the boot data from LAVA
             return self._bundle['test_runs']
 
     @property
     def bundle_attributes(self):
+        """
+        Returns the bundle attributes from a LAVA bundle.
+        """
         if is_key('attributes', self.test_runs[-1]):
             return self._bundle['test_runs'][-1]['attributes']
 
@@ -38,6 +65,9 @@ class Bundle(object):
 class KernelCIBundle(Bundle):
 
     def get_boot_metadata(self):
+        """
+        Returns the kernelci.org boot test metadata from the LAVA bundle.
+        """
         boot_meta = {}
         boot_meta['version'] = '1.0'
         result = self.get_test_results(id='lava')

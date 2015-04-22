@@ -1,8 +1,24 @@
+#!/usr/bin/env python
+#
+# This file is part of lava-ci.  lava-ci is free software: you can
+# redistribute it and/or modify it under the terms of the GNU General Public
+# License as published by the Free Software Foundation, version 2.
+#
+# This program is distributed in the hope that it will be useful, but WITHOUT
+# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+# FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+# details.
+#
+# Copyright Tyler Baker 2015
+
 import xmlrpclib
 import urlparse
 
 
 def handle_connection(func):
+    """
+    Decorator used to handle XMLRPC errors.
+    """
     def inner(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -31,6 +47,12 @@ def handle_connection(func):
 class Connection(object):
 
     def __init__(self, user, token, server):
+        """
+        Abstracts a LAVA server connection.
+        :string : user
+        :string : token
+        :string : server
+        """
         self._user = user
         self._token = token
         self._server = server
@@ -39,11 +61,18 @@ class Connection(object):
 
     @handle_connection
     def validate(self):
+        """
+        Validates the connection by calling a simple method.
+        :self : object
+        """
         print "Validating connection..."
         self._connection.system.listMethods()
 
     @handle_connection
     def connect(self):
+        """
+        Creates a connection to a LAVA server.
+        """
         print 'Connecting to Server...'
         self._connection = xmlrpclib.ServerProxy(self._url)
         self.validate()
@@ -52,14 +81,26 @@ class Connection(object):
 
     @handle_connection
     def get_job_details(self, job_id):
+        """
+        Returns the job details from a LAVA server in JSON format.
+        :int : job_id
+        """
         return self._connection.scheduler.job_details(job_id)
 
     @handle_connection
     def get_job_log(self, job_id):
-        return self._connection.scheduler.job_output(job_id)
+        """
+        Returns the job output from a LAVA server as a string.
+        :int : job_id
+        """
+        return str(self._connection.scheduler.job_output(job_id))
 
     @handle_connection
     def get_bundle(self, bundle_id):
+        """
+        Returns the bundle from a LAVA server in JSON format.
+        :int : bundle_id
+        """
         return self._connection.dashboard.get(bundle_id)
 
     @staticmethod
