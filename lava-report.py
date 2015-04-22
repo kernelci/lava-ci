@@ -186,42 +186,42 @@ def boot_report(args):
                         if test['test_case_id'] == 'test_kernel_boot_time':
                             kernel_boot_time = test['measurement']
                     bundle_attributes = bundle_data['test_runs'][-1]['attributes']
-            if in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+            if is_key('kernel.defconfig', ):
                 print bundle_attributes['kernel.defconfig']
-            if in_bundle_attributes(bundle_attributes, 'target'):
+            if is_key('target', ):
                 board_instance = bundle_attributes['target']
-            if in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+            if is_key('kernel.defconfig', ):
                 kernel_defconfig = bundle_attributes['kernel.defconfig']
                 arch, kernel_defconfig_full = kernel_defconfig.split('-')
                 kernel_defconfig_base = ''.join(kernel_defconfig_full.split('+')[:1])
                 if kernel_defconfig_full == kernel_defconfig_base:
                     kernel_defconfig_full = None
-            if in_bundle_attributes(bundle_attributes, 'kernel.version'):
+            if is_key('kernel.version', ):
                 kernel_version = bundle_attributes['kernel.version']
-            if in_bundle_attributes(bundle_attributes, 'device.tree'):
+            if is_key('device.tree', ):
                 device_tree = bundle_attributes['device.tree']
-            if in_bundle_attributes(bundle_attributes, 'kernel.endian'):
+            if is_key('kernel.endian', ):
                 kernel_endian = bundle_attributes['kernel.endian']
-            if in_bundle_attributes(bundle_attributes, 'platform.fastboot'):
+            if is_key('platform.fastboot', ):
                 fastboot = bundle_attributes['platform.fastboot']
             if kernel_boot_time is None:
-                if in_bundle_attributes(bundle_attributes, 'kernel-boot-time'):
+                if is_key('kernel-boot-time', ):
                     kernel_boot_time = bundle_attributes['kernel-boot-time']
-            if in_bundle_attributes(bundle_attributes, 'kernel.tree'):
+            if is_key('kernel.tree', ):
                 kernel_tree = bundle_attributes['kernel.tree']
-            if in_bundle_attributes(bundle_attributes, 'kernel-image'):
+            if is_key('kernel-image', ):
                 kernel_image = bundle_attributes['kernel-image']
-            if in_bundle_attributes(bundle_attributes, 'kernel-addr'):
+            if is_key('kernel-addr', ):
                 kernel_addr = bundle_attributes['kernel-addr']
-            if in_bundle_attributes(bundle_attributes, 'initrd-addr'):
+            if is_key('initrd-addr', ):
                 initrd_addr = bundle_attributes['initrd-addr']
-            if in_bundle_attributes(bundle_attributes, 'dtb-addr'):
+            if is_key('dtb-addr', ):
                 dtb_addr = bundle_attributes['dtb-addr']
-            if in_bundle_attributes(bundle_attributes, 'dtb-append'):
+            if is_key('dtb-append', ):
                 dtb_append = bundle_attributes['dtb-append']
-            if in_bundle_attributes(bundle_attributes, 'boot_retries'):
+            if is_key('boot_retries', ):
                 boot_retries = int(bundle_attributes['boot_retries'])
-            if in_bundle_attributes(bundle_attributes, 'test.plan'):
+            if is_key('test.plan', ):
                 test_plan = bundle_attributes['test.plan']
 
         # Record the boot log and result

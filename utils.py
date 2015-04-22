@@ -35,8 +35,8 @@ def ensure_dir(directory):
         return False
 
 
-def in_bundle_attributes(bundle_atrributes, key):
-    if key in bundle_atrributes:
+def is_key(key, iterable):
+    if key in iterable:
         return True
     else:
         return False
