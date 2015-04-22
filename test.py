@@ -1,8 +1,8 @@
-from bundle import *
-from job import *
-from connection import *
-from result import *
-from utils import *
+from modules.bundle import *
+from modules.job import *
+from modules.connection import *
+from modules.result import *
+from modules.utils import *
 
 
 def parse_json(json):

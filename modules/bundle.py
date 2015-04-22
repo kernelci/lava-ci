@@ -12,7 +12,8 @@
 # Copyright Tyler Baker 2015
 
 import json
-from utils import is_key
+
+from modules.utils import is_key
 
 
 class Bundle(object):

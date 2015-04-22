@@ -11,7 +11,7 @@
 #
 # Copyright Tyler Baker 2015
 
-from utils import is_key
+from modules.utils import is_key
 
 
 class Job(object):
