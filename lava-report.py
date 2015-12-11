@@ -657,6 +657,7 @@ def test_report(config):
             test_type = None
             test_vcs_commit = None
             test_def_uri = None
+            build_id = None
             efi_rtc = False
             print 'Job ID: %s' % job_id
             job_details = connection.scheduler.job_details(job_id)
@@ -814,29 +815,61 @@ def test_report(config):
                 test_meta['defconfig'] = kernel_defconfig_base
                 if kernel_defconfig_full is not None:
                     test_meta['defconfig_full'] = kernel_defconfig_full
-                if device_map[device_type][1]:
-                    test_meta['mach'] = device_map[device_type][1]
+                #if device_map[device_type][1]:
+                    #test_meta['mach'] = device_map[device_type][1]
                 test_meta['kernel'] = kernel_version
                 test_meta['job'] = kernel_tree
+                # Need to fetch the internal build id
+                if config.get('lab') and config.get('api') and config.get('token'):
+                    headers = {
+                        'Authorization': config.get('token'),
+                        'Content-Type': 'application/json'
+                    }
+                    query = '?kernel=%s' % test_meta['kernel']
+                    query += '&arch=%s' % test_meta['arch']
+                    query += '&job=%s' % test_meta['job']
+                    query += '&limit=1'
+                    query += '&defconfig=%s' % test_meta['defconfig']
+                    if kernel_defconfig_full is not None:
+                        query += '&defconfig_full=%s' % test_meta['defconfig_full']
+                    else:
+                        query += '&defconfig_full=%s' % test_meta['defconfig']
+                    api_url = urlparse.urljoin(config.get('api'), '/build' + query)
+                    response = requests.get(api_url, headers=headers)
+                    data = json.loads(response.content)
+                    build_id = data['result'][0]['_id']['$oid']
+                    print 'Retrieved build id: %s for %s' % (build_id, data['result'][0]['defconfig'])
                 test_meta['board'] = platform_name
-                test_meta['test_set'] = {
+                test_meta['build_id'] = build_id
+                test_meta['test_set'] = [{
                     'name': test_set,
                     'version': '1.0',
                     'definition_uri': test_def_uri,
                     'vcs_commit': test_vcs_commit,
                     'test_case': test_cases
-                }
+                }]
                 json_file = '%s-%s.json' % (test_suite, platform_name)
-                utils.write_json(json_file, results_directory, test_meta)
+                utils.write_json(json_file, directory, test_meta)
                 if config.get('lab') and config.get('api') and config.get('token'):
                     print 'Sending test result to %s for %s' % (config.get('api'), platform_name)
                     headers = {
                         'Authorization': config.get('token'),
                         'Content-Type': 'application/json'
                     }
-                    api_url = urlparse.urljoin(config.get('api'), '/test-suite')
+                    api_url = urlparse.urljoin(config.get('api'), '/test/suite')
                     response = requests.post(api_url, data=json.dumps(test_meta), headers=headers)
-                    print response.content
+                    if response.status_code == 404:
+                        print "ERROR: page not found"
+                        exit(1)
+                    if response.status_code == 403:
+                        print "ERROR: access forbidden"
+                        exit(1)
+                    if response.status_code == 500:
+                        print "ERROR: internal database error"
+                        exit(1)
+                    if response.status_code == (202 or 201 or 200):
+                        print "OK"
+                        print response.content
 
     if results and kernel_tree and kernel_version:
         print 'Creating test summary for %s' % kernel_version
