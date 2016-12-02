@@ -128,319 +128,301 @@ def push(method, url, data, headers):
 
 
 def boot_report(config):
-    connection, jobs, duration =  parse_json(config.get("boot"))
-    # TODO: Fix this when multi-lab sync is working
-    #download_log2html(log2html)
     results_directory = os.getcwd() + '/results'
     results = {}
-    dt_tests = False
+    bundle_attributes = dict()
     utils.mkdir(results_directory)
-    for job_id in jobs:
-        print 'Job ID: %s' % job_id
-        # Init
-        boot_meta = {}
-        api_url = None
-        arch = None
-        board_instance = None
-        boot_retries = 0
-        kernel_defconfig_full = None
-        kernel_defconfig = None
-        kernel_defconfig_base = None
-        kernel_version = None
-        device_tree = None
-        kernel_endian = None
-        kernel_tree = None
-        kernel_addr = None
-        initrd_addr = None
-        dtb_addr = None
-        dtb_append = None
-        fastboot = None
-        fastboot_cmd = None
-        test_plan = None
-        job_file = ''
-        dt_test = None
-        dt_test_result = None
-        dt_tests_passed = None
-        dt_tests_failed = None
-        board_offline = False
-        kernel_boot_time = None
-        boot_failure_reason = None
-        efi_rtc = False
-        # Retrieve job details
-        job_details = connection.scheduler.job_details(job_id)
-        if job_details['requested_device_type_id']:
-            device_type = job_details['requested_device_type_id']
-        if job_details['description']:
-            job_name = job_details['description']
-        result = jobs[job_id]['result']
-        bundle = jobs[job_id]['bundle']
-        if bundle is None and device_type == 'dynamic-vm':
-            host_job_id = job_id.replace('.1', '.0')
-            bundle = jobs[host_job_id]['bundle']
-            if bundle is None:
-                print '%s bundle is empty, skipping...' % device_type
+    kernel_tree = None
+    kernel_version = None
+    for boot in config.get('boot'):
+        connection, jobs, duration =  parse_json(boot)
+        # TODO: Fix this when multi-lab sync is working
+        #download_log2html(log2html)
+        results_directory = os.getcwd() + '/results'
+        results = {}
+        dt_tests = False
+        utils.mkdir(results_directory)
+        for job_id in jobs:
+            print 'Job ID: %s' % job_id
+            # Init
+            boot_meta = {}
+            api_url = None
+            arch = None
+            board_instance = None
+            boot_retries = 0
+            kernel_defconfig_full = None
+            kernel_defconfig = None
+            kernel_defconfig_base = None
+            device_tree = None
+            kernel_endian = None
+            kernel_addr = None
+            initrd_addr = None
+            dtb_addr = None
+            dtb_append = None
+            fastboot = None
+            fastboot_cmd = None
+            test_plan = None
+            job_file = ''
+            dt_test = None
+            dt_test_result = None
+            dt_tests_passed = None
+            dt_tests_failed = None
+            board_offline = False
+            kernel_boot_time = None
+            boot_failure_reason = None
+            efi_rtc = False
+            # Retrieve job details
+            job_details = connection.scheduler.job_details(job_id)
+            if job_details['requested_device_type_id']:
+                device_type = job_details['requested_device_type_id']
+            if job_details['description']:
+                job_name = job_details['description']
+            result = jobs[job_id]['result']
+            bundle = jobs[job_id]['bundle']
+            if not bundle and device_type == 'dynamic-vm':
+                host_job_id = job_id.replace('.1', '.0')
+                bundle = jobs[host_job_id]['bundle']
+                if not bundle:
+                    print '%s bundle is empty, skipping...' % device_type
+                    continue
+            # Retrieve the log file
+            try:
+                binary_job_file = connection.scheduler.job_output(job_id)
+            except xmlrpclib.Fault:
+                print 'Job output not found for %s' % device_type
                 continue
-        # Retrieve the log file
-        try:
-            binary_job_file = connection.scheduler.job_output(job_id)
-        except xmlrpclib.Fault:
-            print 'Job output not found for %s' % device_type
-            continue
-        # Parse LAVA messages out of log
-        raw_job_file = str(binary_job_file)
-        for line in raw_job_file.splitlines():
-            if 'Infrastructure Error:' in line:
-                print 'Infrastructure Error detected!'
-                index = line.find('Infrastructure Error:')
-                boot_failure_reason = line[index:]
-                board_offline = True
-            if 'Bootloader Error:' in line:
-                print 'Bootloader Error detected!'
-                index = line.find('Bootloader Error:')
-                boot_failure_reason = line[index:]
-                board_offline = True
-            if 'Kernel Error:' in line:
-                print 'Kernel Error detected!'
-                index = line.find('Kernel Error:')
-                boot_failure_reason = line[index:]
-            if 'Userspace Error:' in line:
-                print 'Userspace Error detected!'
-                index = line.find('Userspace Error:')
-                boot_failure_reason = line[index:]
-            if '<LAVA_DISPATCHER>' not in line:
-                if len(line) != 0:
-                    job_file += line + '\n'
-            if '### dt-test ### end of selftest' in line:
-                dt_tests = True
-                regex = re.compile("(?P<test>\d+\*?)")
-                dt_test_results = regex.findall(line)
-                if len(dt_test_results) > 2:
-                    dt_tests_passed = dt_test_results[2]
-                    dt_tests_failed = dt_test_results[3]
-                else:
-                    dt_tests_passed = dt_test_results[0]
-                    dt_tests_failed = dt_test_results[1]
-                if int(dt_tests_failed) > 0:
-                    dt_test_result = 'FAIL'
-                else:
-                    dt_test_result = 'PASS'
-            if 'rtc-efi rtc-efi: setting system clock to' in line:
-                if device_type == 'dynamic-vm':
-                    efi_rtc = True
-        # Retrieve bundle
-        if bundle is not None:
-            json_bundle = connection.dashboard.get(bundle)
-            bundle_data = json.loads(json_bundle['content'])
-            # Get the boot data from LAVA
-            for test_results in bundle_data['test_runs']:
-                # Check for the LAVA self boot test
-                if test_results['test_id'] == 'lava':
-                    for test in test_results['test_results']:
-                        # TODO for compat :(
-                        if test['test_case_id'] == 'kernel_boot_time':
-                            kernel_boot_time = test['measurement']
-                        if test['test_case_id'] == 'test_kernel_boot_time':
-                            kernel_boot_time = test['measurement']
-                    bundle_attributes = bundle_data['test_runs'][-1]['attributes']
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
-                print bundle_attributes['kernel.defconfig']
-            if utils.in_bundle_attributes(bundle_attributes, 'target'):
-                board_instance = bundle_attributes['target']
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
-                kernel_defconfig = bundle_attributes['kernel.defconfig']
-                defconfig_list = kernel_defconfig.split('-')
-                arch = defconfig_list[0]
-                # Remove arch
-                defconfig_list.pop(0)
-                kernel_defconfig_full = '-'.join(defconfig_list)
-                kernel_defconfig_base = ''.join(kernel_defconfig_full.split('+')[:1])
-                if kernel_defconfig_full == kernel_defconfig_base:
-                    kernel_defconfig_full = None
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel.version'):
-                kernel_version = bundle_attributes['kernel.version']
-            if utils.in_bundle_attributes(bundle_attributes, 'device.tree'):
-                device_tree = bundle_attributes['device.tree']
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel.endian'):
-                kernel_endian = bundle_attributes['kernel.endian']
-            if utils.in_bundle_attributes(bundle_attributes, 'platform.fastboot'):
-                fastboot = bundle_attributes['platform.fastboot']
-            if kernel_boot_time is None:
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel-boot-time'):
-                    kernel_boot_time = bundle_attributes['kernel-boot-time']
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel.tree'):
-                kernel_tree = bundle_attributes['kernel.tree']
-            if utils.in_bundle_attributes(bundle_attributes, 'kernel-addr'):
-                kernel_addr = bundle_attributes['kernel-addr']
-            if utils.in_bundle_attributes(bundle_attributes, 'initrd-addr'):
-                initrd_addr = bundle_attributes['initrd-addr']
-            if utils.in_bundle_attributes(bundle_attributes, 'dtb-addr'):
-                dtb_addr = bundle_attributes['dtb-addr']
-            if utils.in_bundle_attributes(bundle_attributes, 'dtb-append'):
-                dtb_append = bundle_attributes['dtb-append']
-            if utils.in_bundle_attributes(bundle_attributes, 'boot_retries'):
-                boot_retries = int(bundle_attributes['boot_retries'])
-            if utils.in_bundle_attributes(bundle_attributes, 'test.plan'):
-                test_plan = bundle_attributes['test.plan']
+            # Parse LAVA messages out of log
+            raw_job_file = str(binary_job_file)
+            for line in raw_job_file.splitlines():
+                if 'Infrastructure Error:' in line:
+                    print 'Infrastructure Error detected!'
+                    index = line.find('Infrastructure Error:')
+                    boot_failure_reason = line[index:]
+                    board_offline = True
+                if 'Bootloader Error:' in line:
+                    print 'Bootloader Error detected!'
+                    index = line.find('Bootloader Error:')
+                    boot_failure_reason = line[index:]
+                    board_offline = True
+                if 'Kernel Error:' in line:
+                    print 'Kernel Error detected!'
+                    index = line.find('Kernel Error:')
+                    boot_failure_reason = line[index:]
+                if 'Userspace Error:' in line:
+                    print 'Userspace Error detected!'
+                    index = line.find('Userspace Error:')
+                    boot_failure_reason = line[index:]
+                if '<LAVA_DISPATCHER>' not in line:
+                    if len(line) != 0:
+                        job_file += line + '\n'
+                if '### dt-test ### end of selftest' in line:
+                    dt_tests = True
+                    regex = re.compile("(?P<test>\d+\*?)")
+                    dt_test_results = regex.findall(line)
+                    if len(dt_test_results) > 2:
+                        dt_tests_passed = dt_test_results[2]
+                        dt_tests_failed = dt_test_results[3]
+                    else:
+                        dt_tests_passed = dt_test_results[0]
+                        dt_tests_failed = dt_test_results[1]
+                    if int(dt_tests_failed) > 0:
+                        dt_test_result = 'FAIL'
+                    else:
+                        dt_test_result = 'PASS'
+                if 'rtc-efi rtc-efi: setting system clock to' in line:
+                    if device_type == 'dynamic-vm':
+                        efi_rtc = True
+            # Retrieve bundle
+            if bundle:
+                json_bundle = connection.dashboard.get(bundle)
+                bundle_data = json.loads(json_bundle['content'])
+                # Get the boot data from LAVA
+                for test_results in bundle_data['test_runs']:
+                    # Check for the LAVA self boot test
+                    if test_results['test_id'] == 'lava':
+                        for test in test_results['test_results']:
+                            # TODO for compat :(
+                            if test['test_case_id'] == 'kernel_boot_time':
+                                kernel_boot_time = test['measurement']
+                            if test['test_case_id'] == 'test_kernel_boot_time':
+                                kernel_boot_time = test['measurement']
+                        bundle_attributes = bundle_data['test_runs'][-1]['attributes']
+                if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+                    print bundle_attributes['kernel.defconfig']
+                board_instance = get_attr(bundle_attributes, 'target')
+                if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
+                    kernel_defconfig = bundle_attributes['kernel.defconfig']
+                    defconfig_list = kernel_defconfig.split('-')
+                    arch = defconfig_list[0]
+                    # Remove arch
+                    defconfig_list.pop(0)
+                    kernel_defconfig_full = '-'.join(defconfig_list)
+                    kernel_defconfig_base = ''.join(kernel_defconfig_full.split('+')[:1])
+                    if kernel_defconfig_full == kernel_defconfig_base:
+                        kernel_defconfig_full = None
+                kernel_version = get_attr(bundle_attributes, 'kernel.version')
+                device_tree = get_attr(bundle_attributes, 'device.tree')
+                kernel_endian = get_attr(bundle_attributes, 'kernel.endian')
+                fastboot = get_attr(bundle_attributes, 'platform.fastboot')
+                if not kernel_boot_time:
+                    kernel_boot_time = get_attr(bundle_attributes, 'kernel-boot-time')
+                kernel_tree = get_attr(bundle_attributes, 'kernel.tree')
+                kernel_addr = get_attr(bundle_attributes, 'kernel-addr')
+                initrd_addr = get_attr(bundle_attributes, 'initrd-addr')
+                dtb_addr = get_attr(bundle_attributes, 'dtb-addr')
+                dtb_append = get_attr(bundle_attributes, 'dtb-append')
+                if utils.in_bundle_attributes(bundle_attributes, 'boot_retries'):
+                    boot_retries = int(bundle_attributes['boot_retries'])
+                test_plan = get_attr(bundle_attributes, 'test.plan')
 
-        # Check if we found efi-rtc
-        if test_plan == 'boot-kvm-uefi' and not efi_rtc:
-            if device_type == 'dynamic-vm':
-                boot_failure_reason = 'Unable to read EFI rtc'
-                result = 'FAIL'
-        # Record the boot log and result
-        # TODO: Will need to map device_types to dashboard device types
-        if kernel_defconfig and device_type and result:
-            if (arch == 'arm' or arch =='arm64') and device_tree is None:
-                platform_name = device_map[device_type][0] + ',legacy'
-            else:
-                if device_tree == 'vexpress-v2p-ca15_a7.dtb':
-                    platform_name = 'vexpress-v2p-ca15_a7'
-                elif device_tree == 'fsl-ls2080a-simu.dtb':
-                    platform_name = 'fsl-ls2080a-simu'
-                elif test_plan == 'boot-kvm' or test_plan == 'boot-kvm-uefi':
-                    if device_tree == 'sun7i-a20-cubietruck.dtb':
-                        if device_type == 'dynamic-vm':
-                            device_type = 'cubieboard3-kvm-guest'
-                            platform_name = device_map[device_type][0]
-                        else:
-                            device_type = 'cubieboard3-kvm-host'
-                            platform_name = device_map[device_type][0]
-                    elif device_tree == 'apm-mustang.dtb':
-                        if device_type == 'dynamic-vm':
-                            if test_plan == 'boot-kvm-uefi':
-                                device_type = 'mustang-kvm-uefi-guest'
-                            else:
-                                device_type = 'mustang-kvm-guest'
-                            platform_name = device_map[device_type][0]
-                        else:
-                            if test_plan == 'boot-kvm-uefi':
-                                device_type = 'mustang-kvm-uefi-host'
-                            else:
-                                device_type = 'mustang-kvm-host'
-                            platform_name = device_map[device_type][0]
-                    elif device_tree == 'juno.dtb':
-                        if device_type == 'dynamic-vm':
-                            if test_plan == 'boot-kvm-uefi':
-                                device_type = 'juno-kvm-uefi-guest'
-                            else:
-                                device_type = 'juno-kvm-guest'
-                            platform_name = device_map[device_type][0]
-                        else:
-                            if test_plan == 'boot-kvm-uefi':
-                                device_type = 'juno-kvm-uefi-host'
-                            else:
-                                device_type = 'juno-kvm-host'
-                            platform_name = device_map[device_type][0]
-                elif test_plan == 'boot-nfs' or test_plan == 'boot-nfs-mp':
-                    platform_name = device_map[device_type][0] + '_rootfs:nfs'
+            # Check if we found efi-rtc
+            if test_plan == 'boot-kvm-uefi' and not efi_rtc:
+                if device_type == 'dynamic-vm':
+                    boot_failure_reason = 'Unable to read EFI rtc'
+                    result = 'FAIL'
+            # Record the boot log and result
+            # TODO: Will need to map device_types to dashboard device types
+            if kernel_defconfig and device_type and result:
+                if (arch == 'arm' or arch =='arm64') and not device_tree:
+                    platform_name = device_map[device_type][0] + ',legacy'
                 else:
-                    platform_name = device_map[device_type][0]
-            print 'Creating boot log for %s' % platform_name
-            log = 'boot-%s.txt' % platform_name
-            html = 'boot-%s.html' % platform_name
-            if config.get("lab"):
-                directory = os.path.join(results_directory, kernel_defconfig + '/' + config.get("lab"))
-            else:
-                directory = os.path.join(results_directory, kernel_defconfig)
-            utils.ensure_dir(directory)
-            utils.write_file(job_file, log, directory)
-            if kernel_boot_time is None:
-                kernel_boot_time = '0.0'
-            if results.has_key(kernel_defconfig):
-                results[kernel_defconfig].append({'device_type': platform_name, 'dt_test_result': dt_test_result, 'dt_tests_passed': dt_tests_passed, 'dt_tests_failed': dt_tests_failed, 'kernel_boot_time': kernel_boot_time, 'result': result})
-            else:
-                results[kernel_defconfig] = [{'device_type': platform_name, 'dt_test_result': dt_test_result, 'dt_tests_passed': dt_tests_passed, 'dt_tests_failed': dt_tests_failed, 'kernel_boot_time': kernel_boot_time, 'result': result}]
-            # Create JSON format boot metadata
-            print 'Creating JSON format boot metadata'
-            if config.get("lab"):
-                boot_meta['lab_name'] = config.get("lab")
-            else:
-                boot_meta['lab_name'] = None
-            if board_instance:
-                boot_meta['board_instance'] = board_instance
-            boot_meta['retries'] = boot_retries
-            boot_meta['boot_log'] = log
-            boot_meta['boot_log_html'] = html
-            # TODO: Fix this
-            boot_meta['version'] = '1.0'
-            boot_meta['arch'] = arch
-            boot_meta['defconfig'] = kernel_defconfig_base
-            if kernel_defconfig_full is not None:
-                boot_meta['defconfig_full'] = kernel_defconfig_full
-            if device_map[device_type][1]:
-                boot_meta['mach'] = device_map[device_type][1]
-            boot_meta['kernel'] = kernel_version
-            boot_meta['job'] = kernel_tree
-            boot_meta['board'] = platform_name
-            if board_offline and result == 'FAIL':
-                boot_meta['boot_result'] = 'OFFLINE'
-                #results[kernel_defconfig]['result'] = 'OFFLINE'
-            else:
-                boot_meta['boot_result'] = result
-            if result == 'FAIL' or result == 'OFFLINE':
-                if boot_failure_reason:
-                    boot_meta['boot_result_description'] = boot_failure_reason
+                    if device_tree == 'vexpress-v2p-ca15_a7.dtb':
+                        platform_name = 'vexpress-v2p-ca15_a7'
+                    elif device_tree == 'fsl-ls2080a-simu.dtb':
+                        platform_name = 'fsl-ls2080a-simu'
+                    elif test_plan == 'boot-kvm' or test_plan == 'boot-kvm-uefi':
+                        if device_tree == 'sun7i-a20-cubietruck.dtb':
+                            device_type = 'cubieboard3-kvm'
+                        elif device_tree == 'apm-mustang.dtb':
+                            device_type = 'mustang-kvm'
+                        elif device_tree == 'juno.dtb':
+                            device_type = 'juno-kvm'
+
+                        new_device_type = None
+                        if test_plan.endswith('-uefi'):
+                            new_device_type += '-uefi'
+
+                        if device_type == 'dynamic-vm':
+                            new_device_type += "-guest"
+                        else:
+                            new_device_type += "-host"
+
+                        if new_device_type:
+                            device_type = new_device_type
+                        platform_name = device_map[device_type][0]
+
+                    elif test_plan == 'boot-nfs' or test_plan == 'boot-nfs-mp':
+                        platform_name = device_map[device_type][0] + '_rootfs:nfs'
+                    else:
+                        platform_name = device_map[device_type][0]
+                print 'Creating boot log for %s' % platform_name
+                log = 'boot-%s.txt' % platform_name
+                html = 'boot-%s.html' % platform_name
+                if config.get("lab"):
+                    directory = os.path.join(results_directory, kernel_defconfig + '/' + config.get("lab"))
                 else:
-                    boot_meta['boot_result_description'] = 'Unknown Error: platform failed to boot'
-            boot_meta['boot_time'] = kernel_boot_time
-            # TODO: Fix this
-            boot_meta['boot_warnings'] = None
-            if device_tree:
-                if arch == 'arm64':
-                    boot_meta['dtb'] = 'dtbs/' + device_map[device_type][1] + '/' + device_tree
+                    directory = os.path.join(results_directory, kernel_defconfig)
+                utils.ensure_dir(directory)
+                utils.write_file(job_file, log, directory)
+                if not kernel_boot_time:
+                    kernel_boot_time = '0.0'
+                if results.has_key(kernel_defconfig):
+                    results[kernel_defconfig].append({'device_type': platform_name, 'dt_test_result': dt_test_result, 'dt_tests_passed': dt_tests_passed, 'dt_tests_failed': dt_tests_failed, 'kernel_boot_time': kernel_boot_time, 'result': result})
                 else:
-                    boot_meta['dtb'] = 'dtbs/' + device_tree
-            else:
-                boot_meta['dtb'] = device_tree
-            boot_meta['dtb_addr'] = dtb_addr
-            boot_meta['dtb_append'] = dtb_append
-            boot_meta['dt_test'] = dt_test
-            boot_meta['endian'] = kernel_endian
-            boot_meta['fastboot'] = fastboot
-            # TODO: Fix this
-            boot_meta['initrd'] = None
-            boot_meta['initrd_addr'] = initrd_addr
-            if arch == 'arm':
-                boot_meta['kernel_image'] = 'zImage'
-            elif arch == 'arm64':
-                boot_meta['kernel_image'] = 'Image'
-            else:
-                boot_meta['kernel_image'] = 'bzImage'
-            boot_meta['loadaddr'] = kernel_addr
-            json_file = 'boot-%s.json' % platform_name
-            utils.write_json(json_file, directory, boot_meta)
-            print 'Creating html version of boot log for %s' % platform_name
-            cmd = 'python log2html.py %s' % os.path.join(directory, log)
-            subprocess.check_output(cmd, shell=True)
-            if config.get("lab") and config.get("api") and config.get("token"):
-                print 'Sending boot result to %s for %s' % (config.get("api"), platform_name)
-                headers = {
-                    'Authorization': config.get("token"),
-                    'Content-Type': 'application/json'
-                }
-                api_url = urlparse.urljoin(config.get("api"), '/boot')
-                push('POST', api_url, data=json.dumps(boot_meta), headers=headers)
-                headers = {
-                    'Authorization': config.get("token"),
-                }
-                print 'Uploading text version of boot log'
-                with open(os.path.join(directory, log)) as lh:
-                    data = lh.read()
-                api_url = urlparse.urljoin(config.get("api"), '/upload/%s/%s/%s/%s/%s' % (kernel_tree,
-                                                                                 kernel_version,
-                                                                                 kernel_defconfig,
-                                                                                 config.get("lab"),
-                                                                                 log))
-                push('PUT', api_url, data=data, headers=headers)
-                print 'Uploading html version of boot log'
-                with open(os.path.join(directory, html)) as lh:
-                    data = lh.read()
-                api_url = urlparse.urljoin(config.get("api"), '/upload/%s/%s/%s/%s/%s' % (kernel_tree,
-                                                                                 kernel_version,
-                                                                                 kernel_defconfig,
-                                                                                 config.get("lab"),
-                                                                                 html))
-                push('PUT', api_url, data=data, headers=headers)
+                    results[kernel_defconfig] = [{'device_type': platform_name, 'dt_test_result': dt_test_result, 'dt_tests_passed': dt_tests_passed, 'dt_tests_failed': dt_tests_failed, 'kernel_boot_time': kernel_boot_time, 'result': result}]
+                # Create JSON format boot metadata
+                print 'Creating JSON format boot metadata'
+                if config.get("lab"):
+                    boot_meta['lab_name'] = config.get("lab")
+                else:
+                    boot_meta['lab_name'] = None
+                if board_instance:
+                    boot_meta['board_instance'] = board_instance
+                boot_meta['retries'] = boot_retries
+                boot_meta['boot_log'] = log
+                boot_meta['boot_log_html'] = html
+                # TODO: Fix this
+                boot_meta['version'] = '1.0'
+                boot_meta['arch'] = arch
+                boot_meta['defconfig'] = kernel_defconfig_base
+                if kernel_defconfig_full:
+                    boot_meta['defconfig_full'] = kernel_defconfig_full
+                if device_map[device_type][1]:
+                    boot_meta['mach'] = device_map[device_type][1]
+                boot_meta['kernel'] = kernel_version
+                boot_meta['job'] = kernel_tree
+                boot_meta['board'] = platform_name
+                if board_offline and result == 'FAIL':
+                    boot_meta['boot_result'] = 'OFFLINE'
+                    #results[kernel_defconfig]['result'] = 'OFFLINE'
+                else:
+                    boot_meta['boot_result'] = result
+                if result == 'FAIL' or result == 'OFFLINE':
+                    if boot_failure_reason:
+                        boot_meta['boot_result_description'] = boot_failure_reason
+                    else:
+                        boot_meta['boot_result_description'] = 'Unknown Error: platform failed to boot'
+                boot_meta['boot_time'] = kernel_boot_time
+                # TODO: Fix this
+                boot_meta['boot_warnings'] = None
+                if device_tree:
+                    if arch == 'arm64':
+                        boot_meta['dtb'] = 'dtbs/' + device_map[device_type][1] + '/' + device_tree
+                    else:
+                        boot_meta['dtb'] = 'dtbs/' + device_tree
+                else:
+                    boot_meta['dtb'] = device_tree
+                boot_meta['dtb_addr'] = dtb_addr
+                boot_meta['dtb_append'] = dtb_append
+                boot_meta['dt_test'] = dt_test
+                boot_meta['endian'] = kernel_endian
+                boot_meta['fastboot'] = fastboot
+                # TODO: Fix this
+                boot_meta['initrd'] = None
+                boot_meta['initrd_addr'] = initrd_addr
+                if arch == 'arm':
+                    boot_meta['kernel_image'] = 'zImage'
+                elif arch == 'arm64':
+                    boot_meta['kernel_image'] = 'Image'
+                else:
+                    boot_meta['kernel_image'] = 'bzImage'
+                boot_meta['loadaddr'] = kernel_addr
+                json_file = 'boot-%s.json' % platform_name
+                utils.write_json(json_file, directory, boot_meta)
+                print 'Creating html version of boot log for %s' % platform_name
+                cmd = 'python log2html.py %s' % os.path.join(directory, log)
+                subprocess.check_output(cmd, shell=True)
+                if config.get("lab") and config.get("api") and config.get("token"):
+                    print 'Sending boot result to %s for %s' % (config.get("api"), platform_name)
+                    headers = {
+                        'Authorization': config.get("token"),
+                        'Content-Type': 'application/json'
+                    }
+                    api_url = urlparse.urljoin(config.get("api"), '/boot')
+                    push('POST', api_url, data=json.dumps(boot_meta), headers=headers)
+                    headers = {
+                        'Authorization': config.get("token"),
+                    }
+                    print 'Uploading text version of boot log'
+                    with open(os.path.join(directory, log)) as lh:
+                        data = lh.read()
+                    api_url = urlparse.urljoin(config.get("api"), '/upload/%s/%s/%s/%s/%s' % (
+                        kernel_tree,
+                        kernel_version,
+                        kernel_defconfig,
+                        config.get("lab"),
+                        log))
+                    push('PUT', api_url, data=data, headers=headers)
+                    print 'Uploading html version of boot log'
+                    with open(os.path.join(directory, html)) as lh:
+                        data = lh.read()
+                    api_url = urlparse.urljoin(config.get("api"), '/upload/%s/%s/%s/%s/%s' % (
+                        kernel_tree,
+                        kernel_version,
+                        kernel_defconfig,
+                        config.get("lab"),
+                        html))
+                    push('PUT', api_url, data=data, headers=headers)
 
     if results and kernel_tree and kernel_version:
         print 'Creating boot summary for %s' % kernel_version
@@ -462,14 +444,19 @@ def boot_report(config):
         with open(os.path.join(report_directory, boot), 'a') as f:
             f.write('To: %s\n' % config.get("email"))
             f.write('From: bot@kernelci.org\n')
-            f.write('Subject: %s boot: %s boots: %s passed, %s failed (%s)\n' % (kernel_tree,
-                                                                                str(total),
-                                                                                str(passed),
-                                                                                str(failed),
-                                                                                kernel_version))
+            f.write('Subject: %s boot: %s boots: %s passed, %s failed (%s)\n' % (
+                kernel_tree,
+                str(total),
+                str(passed),
+                str(failed),
+                kernel_version))
             f.write('\n')
-            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
-            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
+            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
+            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
             f.write('\n')
             f.write('Total Duration: %.2f minutes\n' % (duration / 60))
             f.write('Tree/Branch: %s\n' % kernel_tree)
@@ -488,9 +475,10 @@ def boot_report(config):
                         break
                 for result in results_list:
                     if result['result'] == 'OFFLINE':
-                        f.write('    %s   %ss   boot-test: %s\n' % (result['device_type'],
-                                                                    result['kernel_boot_time'],
-                                                                    result['result']))
+                        f.write('    %s   %ss   boot-test: %s\n' % (
+                            result['device_type'],
+                            result['kernel_boot_time'],
+                            result['result']))
                         f.write('\n')
             first = True
             for defconfig, results_list in results.items():
@@ -506,20 +494,23 @@ def boot_report(config):
                         break
                 for result in results_list:
                     if result['result'] == 'FAIL':
-                        f.write('    %s   %ss   boot-test: %s\n' % (result['device_type'],
-                                                                    result['kernel_boot_time'],
-                                                                    result['result']))
+                        f.write('    %s   %ss   boot-test: %s\n' % (
+                            result['device_type'],
+                            result['kernel_boot_time'],
+                            result['result']))
                         if config.get("lab"):
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/boot-%s.html' % (kernel_tree,
-                                                                                                            kernel_version,
-                                                                                                            defconfig,
-                                                                                                            config.get("lab"),
-                                                                                                            result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/boot-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                config.get("lab"),
+                                result['device_type']))
                         else:
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/boot-%s.html' % (kernel_tree,
-                                                                                                         kernel_version,
-                                                                                                         defconfig,
-                                                                                                         result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/boot-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                result['device_type']))
                         f.write('\n')
             f.write('\n')
             f.write('Full Boot Report:\n')
@@ -528,7 +519,10 @@ def boot_report(config):
                 f.write(defconfig)
                 f.write('\n')
                 for result in results_list:
-                    f.write('    %s   %ss   boot-test: %s\n' % (result['device_type'], result['kernel_boot_time'], result['result']))
+                    f.write('    %s   %ss   boot-test: %s\n' % (
+                        result['device_type'],
+                        result['kernel_boot_time'],
+                        result['result']))
 
     # dt-self-test
     if results and kernel_tree and kernel_version and dt_tests:
@@ -546,15 +540,22 @@ def boot_report(config):
         with open(os.path.join(report_directory, dt_self_test), 'a') as f:
             f.write('To: %s\n' % config.get("email"))
             f.write('From: bot@kernelci.org\n')
-            f.write('Subject: %s dt-runtime-unit-tests: %s boards tested: %s passed, %s failed (%s)\n' % (kernel_tree,
-                                                                                                           str(total),
-                                                                                                           str(passed),
-                                                                                                           str(failed),
-                                                                                                           kernel_version))
+            f.write('Subject: %s dt-runtime-unit-tests: %s boards tested: %s passed, %s failed (%s)\n' % (
+                kernel_tree,
+                str(total),
+                str(passed),
+                str(failed),
+                kernel_version))
             f.write('\n')
-            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
-            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
-            f.write('Full Test Report: http://kernelci.org/test/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
+            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
+            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
+            f.write('Full Test Report: http://kernelci.org/test/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
             f.write('\n')
             f.write('Tree/Branch: %s\n' % kernel_tree)
             f.write('Git Describe: %s\n' % kernel_version)
@@ -572,21 +573,24 @@ def boot_report(config):
                         break
                 for result in results_list:
                     if result['dt_test_result'] == "FAIL":
-                        f.write('    %s   passed: %s / failed: %s   dt-runtime-unit-tests: %s\n' % (result['device_type'],
-                                                                                                    result['dt_tests_passed'],
-                                                                                                    result['dt_tests_failed'],
-                                                                                                    result['dt_test_result']))
+                        f.write('    %s   passed: %s / failed: %s   dt-runtime-unit-tests: %s\n' % (
+                            result['device_type'],
+                            result['dt_tests_passed'],
+                            result['dt_tests_failed'],
+                            result['dt_test_result']))
                         if config.get("lab"):
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/boot-%s.html' % (kernel_tree,
-                                                                                                        kernel_version,
-                                                                                                        defconfig,
-                                                                                                        config.get("lab"),
-                                                                                                        result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/boot-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                config.get("lab"),
+                                result['device_type']))
                         else:
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/boot-%s.html' % (kernel_tree,
-                                                                                                         kernel_version,
-                                                                                                         defconfig,
-                                                                                                         result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/boot-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                result['device_type']))
             f.write('\n')
             f.write('\n')
             f.write('Full Unit Test Report:\n')
@@ -599,25 +603,35 @@ def boot_report(config):
                             f.write(defconfig)
                             f.write('\n')
                             first = False
-                        f.write('    %s   passed: %s / failed: %s   dt-runtime-unit-tests: %s\n' % (result['device_type'],
-                                                                                                    result['dt_tests_passed'],
-                                                                                                    result['dt_tests_failed'],
-                                                                                                    result['dt_test_result']))
+                        f.write('    %s   passed: %s / failed: %s   dt-runtime-unit-tests: %s\n' % (
+                            result['device_type'],
+                            result['dt_tests_passed'],
+                            result['dt_tests_failed'],
+                            result['dt_test_result']))
 
     # sendmail
     if config.get("email"):
         print 'Sending e-mail summary to %s' % config.get("email")
-        if os.path.exists(report_directory):
-            cmd = 'cat %s | sendmail -t' % os.path.join(report_directory, boot)
-            subprocess.check_output(cmd, shell=True)
+        send_mail(boot)
         if dt_tests:
-            if os.path.exists(report_directory):
-                cmd = 'cat %s | sendmail -t' % os.path.join(report_directory, dt_self_test)
-                subprocess.check_output(cmd, shell=True)
+            send_mail(dt_self_test)
+
+
+def send_mail(report_directory, filepath):
+    if os.path.exists(report_directory):
+        cmd = 'cat %s | sendmail -t' % os.path.join(report_directory, filepath)
+        subprocess.check_output(cmd, shell=True)
+
+def get_attr(bundle_attributes, attr):
+    result = None
+    if utils.in_bundle_attributes(bundle_attributes, attr):
+        result = bundle_attributes[attr]
+    return result
 
 def test_report(config):
     results_directory = os.getcwd() + '/results'
     results = {}
+    bundle_attributes = dict()
     duration = 0.0
     utils.mkdir(results_directory)
     for test in config.get('test'):
@@ -671,7 +685,7 @@ def test_report(config):
             result = jobs[job_id]['result']
             bundle = jobs[job_id]['bundle']
             # Retrieve bundle
-            if bundle is not None:
+            if bundle:
                 json_bundle = connection.dashboard.get(bundle)
                 bundle_data = json.loads(json_bundle['content'])
                 # Get the boot data from LAVA
@@ -718,47 +732,30 @@ def test_report(config):
                         bundle_attributes = bundle_data['test_runs'][-1]['attributes']
                 if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
                     print bundle_attributes['kernel.defconfig']
-                if utils.in_bundle_attributes(bundle_attributes, 'target'):
-                    board_instance = bundle_attributes['target']
+                board_instance = get_attr(bundle_attributes, 'target')
                 if utils.in_bundle_attributes(bundle_attributes, 'kernel.defconfig'):
                     kernel_defconfig = bundle_attributes['kernel.defconfig']
-                    arch, kernel_defconfig_full = kernel_defconfig.split('-')
+                    arch, kernel_defconfig_full = kernel_defconfig.split('-', 1)
                     kernel_defconfig_base = ''.join(kernel_defconfig_full.split('+')[:1])
                     if kernel_defconfig_full == kernel_defconfig_base:
                         kernel_defconfig_full = None
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel.version'):
-                    kernel_version = bundle_attributes['kernel.version']
-                if utils.in_bundle_attributes(bundle_attributes, 'device.tree'):
-                    device_tree = bundle_attributes['device.tree']
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel.endian'):
-                    kernel_endian = bundle_attributes['kernel.endian']
-                if utils.in_bundle_attributes(bundle_attributes, 'platform.fastboot'):
-                    fastboot = bundle_attributes['platform.fastboot']
-                if kernel_boot_time is None:
-                    if utils.in_bundle_attributes(bundle_attributes, 'kernel-boot-time'):
-                        kernel_boot_time = bundle_attributes['kernel-boot-time']
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel.tree'):
-                    kernel_tree = bundle_attributes['kernel.tree']
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel-image'):
-                    kernel_image = bundle_attributes['kernel-image']
-                if utils.in_bundle_attributes(bundle_attributes, 'kernel-addr'):
-                    kernel_addr = bundle_attributes['kernel-addr']
-                if utils.in_bundle_attributes(bundle_attributes, 'initrd-addr'):
-                    initrd_addr = bundle_attributes['initrd-addr']
-                if utils.in_bundle_attributes(bundle_attributes, 'dtb-addr'):
-                    dtb_addr = bundle_attributes['dtb-addr']
-                if utils.in_bundle_attributes(bundle_attributes, 'dtb-append'):
-                    dtb_append = bundle_attributes['dtb-append']
+                kernel_version = get_attr(bundle_attributes, 'kernel.version')
+                device_tree = get_attr(bundle_attributes, 'device.tree')
+                kernel_endian = get_attr(bundle_attributes, 'kernel.endian')
+                fastboot = get_attr(bundle_attributes, 'platform.fastboot')
+                kernel_boot_time = get_attr(bundle_attributes, 'kernel-boot-time')
+                kernel_tree = get_attr(bundle_attributes, 'kernel.tree')
+                kernel_image = get_attr(bundle_attributes, 'kernel-image')
+                kernel_addr = get_attr(bundle_attributes, 'kernel-addr')
+                initrd_addr = get_attr(bundle_attributes, 'initrd-addr')
+                dtb_addr = get_attr(bundle_attributes, 'dtb-addr')
+                dtb_append = get_attr(bundle_attributes, 'dtb-append')
                 if utils.in_bundle_attributes(bundle_attributes, 'boot_retries'):
                     boot_retries = int(bundle_attributes['boot_retries'])
-                if utils.in_bundle_attributes(bundle_attributes, 'test.plan'):
-                    test_plan = bundle_attributes['test.plan']
-                if utils.in_bundle_attributes(bundle_attributes, 'test.set'):
-                    test_set = bundle_attributes['test.set']
-                if utils.in_bundle_attributes(bundle_attributes, 'test.suite'):
-                    test_suite = bundle_attributes['test.suite']
-                if utils.in_bundle_attributes(bundle_attributes, 'test.type'):
-                    test_type = bundle_attributes['test.type']
+                test_plan = get_attr(bundle_attributes, 'test.plan')
+                test_set = get_attr(bundle_attributes, 'test.set')
+                test_suite = get_attr(bundle_attributes, 'test.suite')
+                test_type = get_attr(bundle_attributes, 'test.type')
 
             # Check if we found efi-rtc
             if test_plan == 'boot-kvm-uefi' and not efi_rtc:
@@ -768,7 +765,7 @@ def test_report(config):
             # Record the boot log and result
             # TODO: Will need to map device_types to dashboard device types
             if kernel_defconfig and device_type and result:
-                if (arch == 'arm' or arch =='arm64') and device_tree is None:
+                if (arch == 'arm' or arch =='arm64') and not device_tree:
                     platform_name = device_map[device_type][0] + ',legacy'
                 else:
                     if device_tree == 'vexpress-v2p-ca15_a7.dtb':
@@ -776,39 +773,26 @@ def test_report(config):
                     elif device_tree == 'fsl-ls2080a-simu.dtb':
                         platform_name = 'fsl-ls2080a-simu'
                     elif test_plan == 'boot-kvm' or test_plan == 'boot-kvm-uefi':
+                        new_device_type = None
                         if device_tree == 'sun7i-a20-cubietruck.dtb':
-                            if device_type == 'dynamic-vm':
-                                device_type = 'cubieboard3-kvm-guest'
-                                platform_name = device_map[device_type][0]
-                            else:
-                                device_type = 'cubieboard3-kvm-host'
-                                platform_name = device_map[device_type][0]
+                            new_device_type = 'cubieboard3-kvm'
                         elif device_tree == 'apm-mustang.dtb':
-                            if device_type == 'dynamic-vm':
-                                if test_plan == 'boot-kvm-uefi':
-                                    device_type = 'mustang-kvm-uefi-guest'
-                                else:
-                                    device_type = 'mustang-kvm-guest'
-                                platform_name = device_map[device_type][0]
-                            else:
-                                if test_plan == 'boot-kvm-uefi':
-                                    device_type = 'mustang-kvm-uefi-host'
-                                else:
-                                    device_type = 'mustang-kvm-host'
-                                platform_name = device_map[device_type][0]
+                            new_device_type = "mustang-kvm"
                         elif device_tree == 'juno.dtb':
-                            if device_type == 'dynamic-vm':
-                                if test_plan == 'boot-kvm-uefi':
-                                    device_type = 'juno-kvm-uefi-guest'
-                                else:
-                                    device_type = 'juno-kvm-guest'
-                                platform_name = device_map[device_type][0]
-                            else:
-                                if test_plan == 'boot-kvm-uefi':
-                                    device_type = 'juno-kvm-uefi-host'
-                                else:
-                                    device_type = 'juno-kvm-host'
-                                platform_name = device_map[device_type][0]
+                            new_device_type = "juno-kvm"
+
+                        if test_plan.endswith('-uefi'):
+                            new_device_type += '-uefi'
+
+                        if device_type == 'dynamic-vm':
+                            new_device_type += "-guest"
+                        else:
+                            new_device_type += "-host"
+
+                        if new_device_type:
+                            device_type = new_device_type
+                        platform_name = device_map[device_type][0]
+
                     elif test_plan == 'boot-nfs' or test_plan == 'boot-nfs-mp':
                         platform_name = device_map[device_type][0] + '_rootfs:nfs'
                     else:
@@ -837,7 +821,7 @@ def test_report(config):
                     test_meta['lab_name'] = None
                 test_meta['arch'] = arch
                 test_meta['defconfig'] = kernel_defconfig_base
-                if kernel_defconfig_full is not None:
+                if kernel_defconfig_full:
                     test_meta['defconfig_full'] = kernel_defconfig_full
                 #if device_map[device_type][1]:
                     #test_meta['mach'] = device_map[device_type][1]
@@ -854,7 +838,7 @@ def test_report(config):
                     query += '&job=%s' % test_meta['job']
                     query += '&limit=1'
                     query += '&defconfig=%s' % test_meta['defconfig']
-                    if kernel_defconfig_full is not None:
+                    if kernel_defconfig_full:
                         query += '&defconfig_full=%s' % test_meta['defconfig_full']
                     else:
                         query += '&defconfig_full=%s' % test_meta['defconfig']
@@ -917,16 +901,23 @@ def test_report(config):
         with open(os.path.join(report_directory, boot), 'a') as f:
             f.write('To: %s\n' % config.get("email"))
             f.write('From: bot@kernelci.org\n')
-            f.write('Subject: %s %s: %s total, %s passed, %s failed (%s)\n' % (kernel_tree,
-                                                                               test_plan,
-                                                                               str(total),
-                                                                               str(passed),
-                                                                               str(failed),
-                                                                               kernel_version))
+            f.write('Subject: %s %s: %s total, %s passed, %s failed (%s)\n' % (
+                kernel_tree,
+                test_plan,
+                str(total),
+                str(passed),
+                str(failed),
+                kernel_version))
             f.write('\n')
-            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
-            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
-            f.write('Full Test Report: http://kernelci.org/test/%s/kernel/%s/\n' % (kernel_tree, kernel_version))
+            f.write('Full Build Report: http://kernelci.org/build/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
+            f.write('Full Boot Report: http://kernelci.org/boot/all/job/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
+            f.write('Full Test Report: http://kernelci.org/test/%s/kernel/%s/\n' % (
+                kernel_tree,
+                kernel_version))
             f.write('\n')
             f.write('Total Duration: %.2f minutes\n' % (duration / 60.0))
             f.write('Tree/Branch: %s\n' % kernel_tree)
@@ -945,9 +936,10 @@ def test_report(config):
                         break
                 for result in results_list:
                     if result['result'] == 'OFFLINE':
-                        f.write('    %s   %s: %s\n' % (result['device_type'],
-                                                       result['test_plan'],
-                                                       result['result']))
+                        f.write('    %s   %s: %s\n' % (
+                            result['device_type'],
+                            result['test_plan'],
+                            result['result']))
                         f.write('\n')
             first = True
             for defconfig, results_list in results.items():
@@ -963,22 +955,25 @@ def test_report(config):
                         break
                 for result in results_list:
                     if result['result'] == 'FAIL':
-                        f.write('    %s   %s: %s\n' % (result['device_type'],
-                                                       result['test_plan'],
-                                                       result['result']))
+                        f.write('    %s   %s: %s\n' % (
+                            result['device_type'],
+                            result['test_plan'],
+                            result['result']))
                         if config.get("lab"):
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/%s-%s.html' % (kernel_tree,
-                                                                                                          kernel_version,
-                                                                                                          defconfig,
-                                                                                                          config.get("lab"),
-                                                                                                          result['test_plan'],
-                                                                                                          result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s/%s-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                config.get("lab"),
+                                result['test_plan'],
+                                result['device_type']))
                         else:
-                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s-%s.html' % (kernel_tree,
-                                                                                                       kernel_version,
-                                                                                                       defconfig,
-                                                                                                       result['test_plan'],
-                                                                                                       result['device_type']))
+                            f.write('    http://storage.kernelci.org/kernel-ci/%s/%s/%s/%s-%s.html' % (
+                                kernel_tree,
+                                kernel_version,
+                                defconfig,
+                                result['test_plan'],
+                                result['device_type']))
                         f.write('\n')
             f.write('\n')
             f.write('Full Test Report:\n')
@@ -987,19 +982,25 @@ def test_report(config):
                 f.write(defconfig)
                 f.write('\n')
                 for result in results_list:
-                    f.write('    %s   %s: %s\n' % (result['device_type'], result['test_plan'], result['result']))
+                    f.write('    %s   %s: %s\n' % (
+                        result['device_type'],
+                        result['test_plan'],
+                        result['result']))
                     for test_case in result['test_cases']:
                         if 'measurement' in test_case:
-                            f.write('         %s: %s %s\n' % (test_case['name'], test_case['measurement'], test_case['units']))
+                            f.write('         %s: %s %s\n' % (
+                                test_case['name'],
+                                test_case['measurement'],
+                                test_case['units']))
                         else:
-                            f.write('         %s: %s\n' % (test_case['name'], test_case['status']))
+                            f.write('         %s: %s\n' % (
+                                test_case['name'],
+                                test_case['status']))
                     f.write('\n')
     # sendmail
     if config.get("email"):
         print 'Sending e-mail summary to %s' % config.get("email")
-        if os.path.exists(report_directory):
-            cmd = 'cat %s | sendmail -t' % os.path.join(report_directory, boot)
-            subprocess.check_output(cmd, shell=True)
+        send_mail(boot)
 
 def main(args):
     config = configuration.get_config(args)
